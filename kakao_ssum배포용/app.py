@@ -47,18 +47,21 @@ st.markdown(
 # ─────────────────────────────────────────────
 # 캐시된 로딩/분석
 # ─────────────────────────────────────────────
+CACHE_VER = "v3"  # 분석 로직이 바뀌면 숫자를 올려서 예전 캐시를 무시
+
+
 @st.cache_data(show_spinner=False)
-def load(raw: bytes, name: str):
+def load(raw: bytes, name: str, ver=CACHE_VER):
     return A.parse_kakao(raw, name)
 
 
 @st.cache_data(show_spinner=False)
-def run_pair(df, a, b, hours):
+def run_pair(df, a, b, hours, ver=CACHE_VER):
     return A.analyze_pair(df, a, b, hours)
 
 
 @st.cache_data(show_spinner=False)
-def run_group(df):
+def run_group(df, ver=CACHE_VER):
     return A.analyze_group(df)
 
 
