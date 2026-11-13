@@ -32,6 +32,13 @@ def find_font():
     for p in FONT_CANDIDATES:
         if os.path.exists(p):
             return p
+    # 마지막 수단: 시스템 폰트 폴더에서 한글 폰트 이름으로 검색
+    for pat in ("*Nanum*", "*CJK*KR*", "*CJK*", "*malgun*", "*Gothic*"):
+        for root in ("/usr/share/fonts", "/usr/local/share/fonts", "C:/Windows/Fonts", "/Library/Fonts"):
+            hits = glob.glob(os.path.join(root, "**", pat), recursive=True)
+            hits = [h for h in hits if h.lower().endswith((".ttf", ".otf", ".ttc"))]
+            if hits:
+                return sorted(hits)[0]
     return None
 
 

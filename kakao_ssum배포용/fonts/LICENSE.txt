@@ -1,0 +1,2 @@
+NotoSansKR-Bold-subset.otf: Noto Sans CJK KR Bold (Google/Adobe) 한글 서브셋
+License: SIL Open Font License 1.1 — https://openfontlicense.org
