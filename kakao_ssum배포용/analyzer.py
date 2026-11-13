@@ -660,3 +660,437 @@ def analyze_group(df_all: pd.DataFrame, min_msgs=5, reply_window_min=10, new_con
         closer_rate = rank["허공 외침"] / rank["메시지"].clip(lower=1)
         awards.append(("📢", "허공에 외치는 자", closer_rate.idxmax(), "이 사람 말로 대화가 끊긴 비율 1위"))
     return {"df": df, "members": members, "rank": rank, "matrix": mat, "pairs": pairs, "awards": awards}
+
+
+# ═════════════════════════════════════════════
+# 7. 팀플 모드
+# ═════════════════════════════════════════════
+RE_WORK = (r"자료|파일|링크|ppt|PPT|피피티|발표|보고서|대본|슬라이드|코드|깃|github|노션|구글|드라이브|"
+           r"조사|정리|초안|수정|피드백|역할|분담|마감|제출|회의|일정|파트|레퍼런스|설문|데이터|분석|"
+           r"\[링크\]|\.pptx|\.pdf|\.docx|\.hwp|\.xlsx|\.zip")
+RE_LEAD = (r"회의|모이자|모일까|모입시다|줌 |zoom|Zoom|역할|분담|정리해서|해주세요|해 주세요|맡아|일정 |투표|공지|"
+           r"각자|마감이|까지 (?:해|올려|제출|완성|마감)|다들 [^ㅋ?]*(?:가능|해주|공유|확인|올려)")
+RE_DONE = r"완료|했어요|했습니다|했어|올렸|업로드|끝냈|다했|다 했|수정했|반영했|보냈|공유했|작성했|만들었"
+RE_FILE = r"^(?:사진|동영상)|파일[:：]|\[링크\]|\.pptx|\.pdf|\.docx|\.hwp|\.xlsx|\.zip"
+RE_YES = r"^\s*(?:넵|네|넹|녜|ㅇㅋ|ㅇㅇ|오키|오케이|okay|ok|OK|알겠습니다|알겠어요|확인|확인했습니다|넵넵|좋아요|좋습니다|굿|ㄱㄱ|ㅇㅋㅇㅋ)[!.~ㅎㅋ\s]*$"
+
+TEAM_WEIGHTS = {"업무 대화": 25, "완료 보고": 20, "자료 공유": 20, "주도(회의·분담)": 20, "호출 응답률": 15}
+
+ROLES = {
+    "lead": ("🧭", "팀장", "회의 잡고 일 나누는 사람"),
+    "file": ("📁", "자료 담당", "파일·링크를 제일 많이 올림"),
+    "done": ("🛠️", "실무 일꾼", "'했어요' 보고가 제일 많음"),
+    "kk": ("🎉", "분위기 메이커", "팀플 지옥에 웃음을 담당"),
+    "ask": ("🙋", "질문 요정", "모르는 건 바로 물어봄"),
+    "yes": ("🙇", "'넵' 봇", "대답은 잘함. 대답만."),
+    "fast": ("⚡", "칼답러", "부르면 1분 안에 나타남"),
+    "night": ("🌙", "야근러", "밤 11시 이후 업무 대화 담당"),
+}
+
+
+def make_team_sample() -> str:
+    rnd = random.Random(2026)
+    weekdays = "월화수목금토일"
+    T = {
+        "승욱": ["다들 내일 9시 줌 회의 가능?", "역할 분담 정리해서 노션에 올릴게요", "발표 자료 금요일까지 마감이에요!",
+                "각자 파트 진행상황 공유해주세요", "피드백 반영해서 최종본 정리했어요", "그럼 자료조사는 지민님이 맡아주세요"],
+        "지민": ["자료 찾아서 드라이브에 올렸어요", "파일: 레퍼런스_정리.pdf", "https://drive.google.com/abc", "사진",
+                "이 논문 참고하면 좋을 것 같아요 https://scholar.google.com", "ppt 초안 공유했습니다"],
+        "수아": ["제 파트 슬라이드 다 했어요", "수정했습니다!", "데이터 분석 결과 정리했어요", "대본 초안 작성했어요",
+                "혹시 3번 슬라이드 순서 바꿔도 될까요?", "피드백 반영했어요"],
+        "현우": ["넵", "네!", "넵넵", "확인했습니다", "ㅇㅋ", "좋아요", "저는 아무거나 괜찮아요"],
+        "태호": ["ㅋㅋㅋㅋㅋㅋ 살려줘", "팀플 끝나면 고기 먹으러 가요 ㅋㅋ", "이모티콘", "다들 화이팅 ㅋㅋㅋ",
+                "제 파트 내일까지 할게요 ㅠㅠ", "아 맞다 그거 언제까지였죠?"],
+    }
+    weight = {"승욱": 5, "지민": 4, "수아": 4, "현우": 2, "태호": 3}
+    lines = ["의료기기 RA 팀플 4조 님과 카카오톡 대화", ""]
+    start = datetime(2026, 10, 19)
+    for day in range(21):
+        d = start + timedelta(days=day)
+        crunch = day >= 17
+        n_sess = 3 if crunch else rnd.choice([0, 1, 1, 2])
+        if n_sess == 0:
+            continue
+        lines.append(f"--------------- {d.year}년 {d.month}월 {d.day}일 {weekdays[d.weekday()]}요일 ---------------")
+        hours = sorted(rnd.sample(range(10, 23), n_sess))
+        if crunch:
+            hours[-1] = 23
+        for hr in hours:
+            t = d.replace(hour=hr, minute=rnd.randint(0, 30))
+            seq = ["승욱"] + rnd.choices(list(weight), weights=list(weight.values()), k=rnd.randint(8, 26 if crunch else 14))
+            for who in seq:
+                t += timedelta(minutes=rnd.choice([0, 1, 1, 2, 3, 6]))
+                if t.date() != d.date():
+                    break
+                ampm = "오전" if t.hour < 12 else "오후"
+                lines.append(f"[{who}] [{ampm} {t.hour % 12 or 12}:{t.minute:02d}] {rnd.choice(T[who])}")
+    return "\n".join(lines)
+
+
+def _gini(x):
+    x = sorted(max(v, 0) for v in x)
+    n = len(x)
+    if n == 0 or sum(x) == 0:
+        return 0.0
+    cum = sum((i + 1) * v for i, v in enumerate(x))
+    return (2 * cum) / (n * sum(x)) - (n + 1) / n
+
+
+def analyze_team(df_all: pd.DataFrame, min_msgs=3, new_conv_hours=3, call_window_min=60) -> dict:
+    counts = df_all["sender"].value_counts()
+    members = counts[counts >= min_msgs].index.tolist()
+    df = enrich(df_all[df_all["sender"].isin(members)], new_conv_hours)
+    msg = df["message"]
+    df["work"] = msg.str.contains(RE_WORK, regex=True).astype(int)
+    df["lead"] = msg.str.contains(RE_LEAD, regex=True).astype(int)
+    df["done"] = msg.str.contains(RE_DONE, regex=True).astype(int)
+    df["file"] = msg.str.contains(RE_FILE, regex=True).astype(int)
+    df["yes"] = msg.str.match(RE_YES).astype(int)
+    df["night_work"] = (df["work"] == 1) & ((df["hour"] >= 23) | (df["hour"] < 5))
+
+    # 호출 응답률: 다른 사람이 '주도' 메시지를 보낸 뒤 60분 안에 반응했는지
+    calls = df[df["lead"] == 1][["time", "sender"]].values
+    times = df["time"].values
+    senders = df["sender"].values
+    resp = {m: [0, 0] for m in members}
+    import numpy as np
+    for t, who in calls:
+        lo = np.searchsorted(times, np.datetime64(t), side="right")
+        hi = np.searchsorted(times, np.datetime64(t) + np.timedelta64(call_window_min, "m"), side="right")
+        answered = set(senders[lo:hi])
+        for m in members:
+            if m == who:
+                continue
+            resp[m][1] += 1
+            resp[m][0] += m in answered
+
+    rows = {}
+    for m in members:
+        d = df[df["sender"] == m]
+        n = max(len(d), 1)
+        rows[m] = {
+            "메시지": len(d),
+            "업무 대화": int(d["work"].sum()),
+            "완료 보고": int(d["done"].sum()),
+            "자료 공유": int(d["file"].sum()),
+            "주도(회의·분담)": int(d["lead"].sum()),
+            "호출 응답률": resp[m][0] / resp[m][1] if resp[m][1] else 0.0,
+            "'넵' 비율": float(d["yes"].sum() / n),
+            "질문": int(d["question"].sum()),
+            "ㅋ/메시지": float(d["kk"].sum() / n),
+            "답장 속도(분)": _median_reply(d, 1),
+            "야근 메시지": int(d["night_work"].sum()),
+        }
+    T = pd.DataFrame(rows).T
+
+    # 기여도 (항목별 팀 내 최고 대비 비율 × 가중치)
+    contrib = pd.Series(0.0, index=members)
+    parts = {}
+    for k, w in TEAM_WEIGHTS.items():
+        col = T[k].astype(float)
+        mx = col.max()
+        part = (col / mx * w) if mx > 0 else col * 0
+        parts[k] = part
+        contrib += part
+    T["기여도"] = contrib
+    yes_ratio = T["'넵' 비율"].astype(float)
+    T["무임승차 지수"] = (0.75 * (100 - contrib) + 25 * (yes_ratio / max(yes_ratio.max(), 0.01))).clip(0, 100)
+
+    def fr_label(v):
+        if v >= 70:
+            return "🚨 무임승차 강력 의심"
+        if v >= 50:
+            return "👀 관찰 대상"
+        if v >= 30:
+            return "🙂 무난한 팀원"
+        return "🦸 캐리 담당"
+    T["판정"] = T["무임승차 지수"].map(fr_label)
+
+    # 역할
+    metric_for_role = {
+        "lead": T["주도(회의·분담)"].astype(float), "file": T["자료 공유"].astype(float),
+        "done": T["완료 보고"].astype(float), "kk": T["ㅋ/메시지"].astype(float),
+        "ask": T["질문"].astype(float), "yes": T["'넵' 비율"].astype(float),
+        "fast": -T["답장 속도(분)"].astype(float).fillna(999), "night": T["야근 메시지"].astype(float),
+    }
+    role_score = {}
+    for r, col in metric_for_role.items():
+        if r == "fast":
+            v = 1 / (1 + T["답장 속도(분)"].astype(float).fillna(60))
+            role_score[r] = v / v.sum() if v.sum() else v
+        else:
+            role_score[r] = col / col.sum() if col.sum() > 0 else col * 0
+    RS = pd.DataFrame(role_score)
+    roles, taken = {}, set()
+    # 점유율이 가장 뚜렷한 조합부터 배정 (같은 역할은 한 명만)
+    pairs = sorted(((RS.loc[m, r], m, r) for m in members for r in RS.columns), reverse=True)
+    for score, m, r in pairs:
+        if m in roles or r in taken or score <= 0:
+            continue
+        roles[m] = ROLES[r]
+        taken.add(r)
+    for m in members:
+        roles.setdefault(m, ("🙂", "평범한 팀원", "튀지 않게 묻어가는 중"))
+    T["역할"] = [f"{roles[m][0]} {roles[m][1]}" for m in members]
+
+    # 팀 유형
+    g = _gini(contrib.tolist())
+    top_share = contrib.max() / contrib.sum() if contrib.sum() else 0
+    work_rate = df["work"].mean()
+    if work_rate < 0.08:
+        ttype = ("😴", "다 같이 조용한 팀", "업무 얘기가 거의 없어요. 혹시 다른 방에서 일하나요?")
+    elif top_share >= 0.4 or g >= 0.35:
+        ttype = ("🦸", "원맨 캐리 팀", f"{contrib.idxmax()}님이 혼자 끌고 가는 중... 고생 많으세요")
+    elif g < 0.15:
+        ttype = ("⚖️", "N빵 정석 팀", "기여도가 고르게 나뉜 이상적인 팀이에요")
+    else:
+        ttype = ("🤝", "무난한 협업 팀", "몇 명이 조금 더 하지만 대체로 잘 굴러가요")
+
+    # 마감 텐션
+    daily = df.groupby("date").agg(메시지=("message", "size"), 업무=("work", "sum")).reset_index()
+    daily["date"] = pd.to_datetime(daily["date"])
+    crunch = daily.loc[daily["업무"].idxmax()] if len(daily) else None
+    late = df[df["night_work"]]
+
+    hl = []
+    if crunch is not None:
+        hl.append(("🔥", "마감 폭주의 날", f"{crunch['date']:%m월 %d일} — 업무 메시지 {int(crunch['업무'])}개"))
+    first_call = df[df["lead"] == 1]
+    if len(first_call):
+        r = first_call.iloc[0]
+        hl.append(("📣", "첫 회의 소집", f"{r['time']:%m월 %d일 %H:%M}, {r['sender']}님 — “{_clip(r['message'])}”"))
+    if len(late):
+        r = late.sort_values("hour", key=lambda h: (h + 19) % 24).iloc[-1]
+        hl.append(("🌙", "가장 늦은 야근", f"{r['time']:%m월 %d일 %H:%M}, {r['sender']}님 — “{_clip(r['message'])}”"))
+    ycount = df[df["yes"] == 1]["sender"].value_counts()
+    if len(ycount):
+        hl.append(("🙇", "'넵' 최다 보유자", f"{ycount.index[0]}님 — '넵·네·확인' 계열 {int(ycount.iloc[0])}회"))
+    fcount = df[df["file"] == 1]["sender"].value_counts()
+    if len(fcount):
+        hl.append(("📁", "자료 폭탄", f"{fcount.index[0]}님이 파일·링크·사진 {int(fcount.iloc[0])}개 공유"))
+
+    T = T.sort_values("기여도", ascending=False)
+    return {"df": df, "members": members, "table": T, "parts": pd.DataFrame(parts), "type": ttype,
+            "gini": g, "daily": daily, "highlights": hl, "mvp": T.index[0],
+            "suspect": T["무임승차 지수"].idxmax()}
+
+
+# ═════════════════════════════════════════════
+# 8. 친구 모드
+# ═════════════════════════════════════════════
+RE_PLAN = r"밥 ?먹|술 ?마|한잔|만나|보자|볼래|언제 ?봄|놀자|놀러|ㄱㄱ|가자|갈래|약속|시간 ?돼|시간 ?되|콜\?|모이자|번개"
+RE_CARE = r"괜찮아|괜찮냐|힘내|고생|수고|조심|아프지|푹 ?쉬|생일|축하|ㅊㅋ|응원|잘될|잘 될|화이팅|파이팅"
+RE_DRIP = r"ㅅㅂ|시발|씨발|미친|ㅁㅊ|개웃|ㅈㄴ|존나|졸라|레전드|실화|ㄹㅇ|ㅋㅋㅋㅋㅋㅋ|킹받|어이없|돌았"
+RE_SAD = r"ㅠ|ㅜ|힘들|우울|속상|짜증|스트레스|고민"
+
+FRIEND_WEIGHTS = {"선톡": 30, "약속 제안": 25, "챙기는 말": 15, "답장 속도": 15, "리액션(ㅋ)": 15}
+
+
+def make_friend_sample(me="승욱", you="도윤") -> str:
+    rnd = random.Random(515)
+    weekdays = "월화수목금토일"
+    me_t = ["ㅋㅋㅋㅋㅋㅋㅋ 미친", "야 이거 봐 ㅋㅋㅋㅋ", "레전드다 진짜", "ㄹㅇ ㅋㅋㅋㅋ", "사진", "아 킹받네 ㅋㅋㅋ",
+            "주말에 술 한잔 ㄱ?", "언제 봄?", "괜찮냐 요즘 힘들어 보이던데", "고생했다 ㅋㅋ", "이모티콘"]
+    you_t = ["ㅋㅋㅋㅋㅋㅋㅋㅋ", "ㅇㅇ ㄱㄱ", "아 나 요즘 회사 때문에 좀 힘들다 ㅠㅠ 팀장이 맨날 야근시킴", "ㄹㅇ 개웃기네",
+             "그래 토요일 콜", "ㅋㅋㅋ 미쳤냐", "고맙다 ㅋㅋ", "나 다음주 생일인거 알지?", "ㅇㅋ", "이모티콘", "사진"]
+    start = datetime(2026, 9, 1)
+    lines = [f"{you} 님과 카카오톡 대화", ""]
+    for day in range(0, 72):
+        d = start + timedelta(days=day)
+        p = 0.55 if day < 50 else 0.25  # 최근엔 연락이 좀 뜸해짐
+        if rnd.random() > p:
+            continue
+        lines.append(f"--------------- {d.year}년 {d.month}월 {d.day}일 {weekdays[d.weekday()]}요일 ---------------")
+        t = d.replace(hour=rnd.randint(12, 23), minute=rnd.randint(0, 50))
+        who = me if rnd.random() < 0.6 else you
+        for _ in range(rnd.randint(4, 16)):
+            pool = me_t if who == me else you_t
+            ampm = "오전" if t.hour < 12 else "오후"
+            lines.append(f"[{who}] [{ampm} {t.hour % 12 or 12}:{t.minute:02d}] {rnd.choice(pool)}")
+            t += timedelta(minutes=rnd.choice([0, 1, 1, 2, 4, 10]))
+            if t.date() != d.date():
+                break
+            who = you if who == me else me
+    return "\n".join(lines)
+
+
+def _friend_flags(df):
+    msg = df["message"]
+    df["plan"] = msg.str.contains(RE_PLAN, regex=True).astype(int)
+    df["care"] = msg.str.contains(RE_CARE, regex=True).astype(int)
+    df["drip"] = msg.str.count(RE_DRIP)
+    df["deep"] = ((df["len"] >= 35) | msg.str.contains(RE_SAD, regex=True) & (df["len"] >= 15)).astype(int)
+    return df
+
+
+def friend_person(df, p):
+    d = df[df["sender"] == p]
+    n = max(len(d), 1)
+    base = person_stats(df, p)
+    base.update({
+        "약속 제안": int(d["plan"].sum()),
+        "챙기는 말": int(d["care"].sum()),
+        "드립·찐반응": int(d["drip"].sum()),
+        "진지한 대화": int(d["deep"].sum()),
+        "_plan_rate": d["plan"].sum() / n, "_care_rate": d["care"].sum() / n,
+        "_drip_rate": d["drip"].sum() / n, "_deep_rate": d["deep"].sum() / n,
+    })
+    return base
+
+
+def friend_type(s, o):
+    tot = s["선톡 횟수"] + o["선톡 횟수"]
+    share = s["선톡 횟수"] / tot if tot else 0.5
+    tail = "먼저 연락하는 쪽" if share >= 0.56 else ("연락 받는 쪽" if share <= 0.44 else "쌍방 연락파")
+    r = s["답장 속도(분, 중앙값)"]
+    traits = [
+        (s["_drip_rate"] >= 0.35, "드립 장인", "대화의 8할이 드립"),
+        (s["_deep_rate"] >= 0.12, "고민 상담소장", "진지한 얘기는 이 사람이 다 함"),
+        (s["_care_rate"] >= 0.08, "공감 요정", "힘들 땐 먼저 챙겨주는"),
+        (s["_plan_rate"] >= 0.08, "약속 총무", "'언제 봄?'은 늘 이 사람 몫"),
+        (s["ㅋ/메시지"] >= 1.5, "리액션 머신", "ㅋ를 숨 쉬듯이 생산"),
+        (not math.isnan(r) and r < 1.5, "칼답러", "알림 뜨자마자 답장"),
+        (s["새벽 메시지"] >= 10, "새벽 수다러", "새벽에 더 말이 많아짐"),
+        (0 < s["평균 글자 수"] < 6, "단답 장인", "ㅇㅇ ㅇㅋ로 대화 가능"),
+    ]
+    for ok, name, d in traits:
+        if ok:
+            return name, f"{d} · {tail}"
+    return "무난한 친구", f"모든 게 평균 · {tail}"
+
+
+def friend_verdict(temp, score_a, trend, a, b):
+    diff = score_a - 50
+    lead, follow = (a, b) if diff > 0 else (b, a)
+    if temp >= 60 and abs(diff) < 8:
+        return "💎", "평생 베프", "서로 챙기고 서로 웃기는, 이미 가족 같은 사이"
+    if temp >= 60:
+        return "🐶", "한쪽이 더 챙기는 베프", f"{lead}님이 더 챙기는 중. {follow}님, 이번엔 먼저 연락해 보세요!"
+    if temp < 40 and trend < -0.2:
+        return "🌫️", "연락 끊기기 직전", "요즘 대화가 확 줄었어요. 지금 '밥 한번 먹자' 보내면 살릴 수 있어요"
+    if temp >= 40:
+        return "🍻", "놀 때 부르는 친구", "자주는 아니어도 만나면 재밌는 사이"
+    return "📞", "용건만 친구", "필요할 때만 연락하는 쿨한 사이"
+
+
+def analyze_friend_pair(df_all, a, b, new_conv_hours=6):
+    df = _friend_flags(enrich(df_all[df_all["sender"].isin([a, b])], new_conv_hours))
+    sa, sb = friend_person(df, a), friend_person(df, b)
+    ra = 30 if math.isnan(sa["답장 속도(분, 중앙값)"]) else sa["답장 속도(분, 중앙값)"]
+    rb = 30 if math.isnan(sb["답장 속도(분, 중앙값)"]) else sb["답장 속도(분, 중앙값)"]
+    parts = {
+        "선톡": _share(sa["선톡 횟수"], sb["선톡 횟수"]),
+        "약속 제안": _share(sa["약속 제안"], sb["약속 제안"]),
+        "챙기는 말": _share(sa["챙기는 말"], sb["챙기는 말"]),
+        "답장 속도": _share(rb + 0.5, ra + 0.5),
+        "리액션(ㅋ)": _share(sa["ㅋ/메시지"], sb["ㅋ/메시지"]),
+    }
+    score_a = sum(FRIEND_WEIGHTS[k] * v for k, v in parts.items())
+
+    # 우정 온도
+    span_weeks = max(((df["time"].max() - df["time"].min()).days + 1) / 7, 1)
+    weeks_active = df["time"].dt.to_period("W").nunique()
+    consistency = min(1, weeks_active / span_weeks)
+    days_active = df["date"].nunique()
+    mpd = len(df) / max(days_active, 1)
+    last = df["time"].max()
+    recent = int((df["time"] > last - timedelta(days=14)).sum())
+    prev = int(((df["time"] <= last - timedelta(days=14)) & (df["time"] > last - timedelta(days=28))).sum())
+    trend = (recent - prev) / max(recent, prev, 1)
+    kk_rate = df["kk"].sum() / max(len(df), 1)
+    deep_rate = df["deep"].mean()
+    temp = (30 * consistency + 20 * min(1, mpd / 40) + 20 * min(1, kk_rate / 1.2)
+            + 15 * min(1, deep_rate / 0.06) + 15 * (0.5 + trend / 2))
+    emoji, title, desc = friend_verdict(temp, score_a, trend, a, b)
+
+    # 연락 공백
+    dates = sorted(set(df["date"]))
+    gaps = [((dates[i] - dates[i - 1]).days, dates[i - 1], dates[i]) for i in range(1, len(dates))]
+    longest = max(gaps) if gaps else (0, None, None)
+
+    hl = []
+    first, lastt = df["time"].min(), df["time"].max()
+    hl.append(("📆", "우리의 기록", f"{first:%Y.%m.%d} ~ {lastt:%Y.%m.%d} · {days_active}일 대화, 총 {len(df):,}개 메시지"))
+    kkday = df.groupby("date")["kk"].sum()
+    hl.append(("😂", "가장 많이 웃은 날", f"{kkday.idxmax():%m월 %d일} — ㅋ {int(kkday.max())}개"))
+    if longest[0] >= 2:
+        hl.append(("🕳️", "최장 연락 공백", f"{longest[1]:%m월 %d일} ~ {longest[2]:%m월 %d일}, {longest[0]}일 동안 조용"))
+    plan = df[df["plan"] == 1]
+    if len(plan):
+        r = plan.iloc[0]
+        hl.append(("🍚", "첫 약속 제안", f"{r['time']:%m월 %d일}, {r['sender']}님 — “{_clip(r['message'])}”"))
+    deep = df[df["deep"] == 1]
+    if len(deep):
+        r = deep.loc[deep["len"].idxmax()]
+        hl.append(("🫂", "가장 진지했던 순간", f"{r['time']:%m월 %d일}, {r['sender']}님 — “{_clip(r['message'], 34)}”"))
+    care = df[df["care"] == 1]["sender"].value_counts()
+    if len(care):
+        hl.append(("💛", "챙김 담당", f"{care.index[0]}님 — '괜찮아?·고생했어' 계열 {int(care.iloc[0])}회"))
+
+    warn = None
+    if trend < -0.3:
+        warn = f"최근 2주 대화가 그 전 2주보다 {abs(trend):.0%} 줄었어요. 먼저 '요즘 뭐하고 지내?' 한마디 어때요?"
+
+    return {"df": df, "stats": {a: sa, b: sb}, "score_a": score_a, "parts": parts, "temp": temp,
+            "emoji": emoji, "title": title, "desc": desc, "trend": trend, "recent": recent, "prev": prev,
+            "mpd": mpd, "consistency": consistency,
+            "types": {a: friend_type(sa, sb), b: friend_type(sb, sa)},
+            "highlights": hl, "warn": warn, "words": {a: top_words(df, a), b: top_words(df, b)}}
+
+
+FRIEND_ROLES = [
+    ("kk", "🎉", "분위기 메이커", "메시지당 ㅋ 최다"),
+    ("drip", "🤪", "드립 담당", "드립·찐반응 최다"),
+    ("plan", "🍚", "약속 총무", "'언제 봄?' 최다 발언"),
+    ("care", "💛", "엄마 담당", "챙기는 말 최다"),
+    ("deep", "🫂", "고민 상담소", "진지한 얘기 최다"),
+    ("photo", "📸", "사진 작가", "사진·이모티콘 최다"),
+    ("dawn", "🌙", "새벽 지킴이", "새벽 메시지 최다"),
+    ("lurk", "👀", "눈팅러", "있는 듯 없는 듯"),
+]
+
+
+def analyze_friend_group(df_all, min_msgs=3):
+    G = analyze_group(df_all, min_msgs=min_msgs)
+    df = _friend_flags(G["df"])
+    df["pic"] = df["photo"] + df["emoticon"]
+    members = G["members"]
+    agg = df.groupby("sender").agg(n=("message", "size"), kk=("kk", "sum"), drip=("drip", "sum"),
+                                   plan=("plan", "sum"), care=("care", "sum"), deep=("deep", "sum"),
+                                   photo=("pic", "sum"), dawn=("dawn", "sum")).reindex(members).fillna(0)
+    rates = agg.drop(columns="n").div(agg["n"].clip(lower=1), axis=0)
+    rates["dawn"] = agg["dawn"]  # 새벽은 절대 개수
+    rates["lurk"] = 1 / agg["n"].clip(lower=1)
+    roles, taken = {}, set()
+    cand = []
+    for key, *_ in FRIEND_ROLES:
+        col = rates[key]
+        if col.sum() > 0:
+            for m in members:
+                cand.append((col[m] / col.sum(), m, key))
+    for sc, m, key in sorted(cand, reverse=True):
+        if m in roles or key in taken or sc <= 0:
+            continue
+        roles[m] = key
+        taken.add(key)
+    role_info = {k: (e, n, d) for k, e, n, d in FRIEND_ROLES}
+    role_list = [(role_info[roles[m]][0], role_info[roles[m]][1], m, role_info[roles[m]][2])
+                 for m in members if m in roles]
+
+    # 단톡 생존율
+    last = df["time"].max()
+    recent = int((df["time"] > last - timedelta(days=14)).sum())
+    prev = int(((df["time"] <= last - timedelta(days=14)) & (df["time"] > last - timedelta(days=28))).sum())
+    trend = (recent - prev) / max(recent, prev, 1)
+    active_share = (df[df["time"] > last - timedelta(days=14)]["sender"].nunique()) / max(len(members), 1)
+    survival = max(3, min(99, 50 + 30 * trend + 20 * (active_share - 0.5) * 2))
+    if survival >= 80:
+        sv = "🔥 아주 팔팔하게 살아있는 방"
+    elif survival >= 55:
+        sv = "🙂 잘 굴러가는 중"
+    elif survival >= 30:
+        sv = "😮‍💨 슬슬 조용해지는 중"
+    else:
+        sv = "🪦 곧 화석이 될 위기"
+    return {**G, "df": df, "roles": role_list, "survival": survival, "survival_label": sv,
+            "trend": trend, "recent": recent, "prev": prev, "active_share": active_share}

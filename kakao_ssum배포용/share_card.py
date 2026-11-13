@@ -297,3 +297,177 @@ def make_group_card(room, n_members, n_msgs, period, awards, pairs):
 
     _ct(d, cx, 1830, "재미로 보는 분석  ·  카톡 썸 분석기", _f(30), WHITE)
     return _png(img)
+
+
+# ─────────────── 친구 1:1 카드 ───────────────
+MINT, MINT_SOFT, SUN, SUN_SOFT = (22, 170, 140), (226, 248, 241), (240, 160, 20), (255, 245, 214)
+
+
+def make_friend_card(a, b, title, desc, temp, consistency, score_a, stats, type_a, type_b):
+    if FONT_PATH is None:
+        return None
+    img = _background((40, 196, 160), (255, 205, 90))
+    d = ImageDraw.Draw(img)
+    sa_, sb_ = _short(a), _short(b)
+    cx = W / 2
+    _pill(d, cx, 92, "KAKAOTALK  FRIEND  REPORT", _f(26), WHITE, (90, 210, 180), 26, 12)
+    head = f"{sa_}  &  {sb_}"
+    _ct(d, cx, 170, head, _fit(d, head, 900, 76), WHITE)
+    _panel(img, (60, 300, 1020, 1790))
+    d = ImageDraw.Draw(img)
+
+    y = _pill(d, cx, 350, "우정 판정", _f(32), MINT, MINT_SOFT, 30, 14)
+    _ct(d, cx, y + 22, _clean(title), _fit(d, _clean(title), 860, 92), INK)
+    desc = _clean(desc).replace(_clean(a), sa_).replace(_clean(b), sb_)
+    yy = y + 150
+    for line in _wrap(d, desc, _f(36), 820)[:2]:
+        _ct(d, cx, yy, line, _f(36), MUTED)
+        yy += 50
+
+    gy = 860
+    for gx, pct, big, cap, col in ((310, temp, f"{temp:.0f}°", "우정 온도", MINT),
+                                   (770, consistency * 100, f"{consistency * 100:.0f}%", "꾸준함", SUN)):
+        _ring(img, gx, gy, 150, 26, pct, col, track=(236, 246, 242))
+        d = ImageDraw.Draw(img)
+        _ct(d, gx, gy - 58, big, _f(84), INK)
+        _ct(d, gx, gy + 44, cap, _f(30), MUTED)
+
+    y = gy + 220
+    _ct(d, cx, y, "누가 더 챙길까?", _f(30), MUTED)
+    y += 54
+    x0, x1, bh = 120, 960, 74
+    split = x0 + (x1 - x0) * score_a / 100
+    d.rounded_rectangle((x0, y, x1, y + bh), radius=bh / 2, fill=SUN)
+    d.rounded_rectangle((x0, y, max(split, x0 + bh), y + bh), radius=bh / 2, fill=MINT)
+    if x0 + bh < split < x1 - bh:
+        d.rectangle((split - bh / 2, y, split, y + bh), fill=MINT)
+    fa, fb = f"{sa_} {score_a:.0f}%", f"{sb_} {100 - score_a:.0f}%"
+    ffa = _fit(d, fa, max(split - x0 - 50, 110), 34, 20)
+    ffb = _fit(d, fb, max(x1 - split - 50, 110), 34, 20)
+    d.text((x0 + 30, y + bh / 2 - ffa.size * 0.62), fa, font=ffa, fill=WHITE)
+    d.text((x1 - 30 - d.textlength(fb, font=ffb), y + bh / 2 - ffb.size * 0.62), fb, font=ffb, fill=WHITE)
+
+    y += bh + 50
+    for i, (who, tp, col, soft, key) in enumerate(((sa_, type_a, MINT, MINT_SOFT, a), (sb_, type_b, SUN, SUN_SOFT, b))):
+        bx0 = 110 + i * 440
+        d.rounded_rectangle((bx0, y, bx0 + 420, y + 380), radius=34, fill=soft)
+        bcx = bx0 + 210
+        _ct(d, bcx, y + 30, who, _fit(d, who, 360, 32), col)
+        _ct(d, bcx, y + 82, _clean(tp[0]), _fit(d, _clean(tp[0]), 370, 50), INK)
+        ly = y + 165
+        for line in _wrap(d, _clean(tp[1]), _f(28), 350)[:3]:
+            _ct(d, bcx, ly, line, _f(28), (100, 100, 100))
+            ly += 40
+        st = stats[key]
+        meta = f"선톡 {st['선톡 횟수']} · 약속 제안 {st['약속 제안']}"
+        _ct(d, bcx, y + 310, meta, _fit(d, meta, 370, 30), col)
+    _ct(d, cx, 1830, "재미로 보는 분석  ·  카톡 관계 분석기", _f(30), WHITE)
+    return _png(img)
+
+
+def make_friend_group_card(room, n_members, n_msgs, period, pairs, roles, survival, survival_label):
+    """pairs=[(a,b,케미,답장수)], roles=[(emoji, 역할, 이름, 설명)]"""
+    if FONT_PATH is None:
+        return None
+    img = _background((40, 196, 160), (255, 205, 90))
+    d = ImageDraw.Draw(img)
+    cx = W / 2
+    _pill(d, cx, 92, "KAKAOTALK  SQUAD  REPORT", _f(26), WHITE, (90, 210, 180), 26, 12)
+    title = _clean(room) or "우리 단톡방"
+    _ct(d, cx, 166, title, _fit(d, title, 900, 72), WHITE)
+    _ct(d, cx, 272, f"{n_members}명  ·  메시지 {n_msgs:,}개  ·  {period}", _f(30), WHITE)
+    _panel(img, (60, 340, 1020, 1790))
+    d = ImageDraw.Draw(img)
+
+    # 생존율 링 + 베프 짝꿍
+    _ring(img, 260, 560, 130, 24, survival, MINT, track=(236, 246, 242))
+    d = ImageDraw.Draw(img)
+    _ct(d, 260, 505, f"{survival:.0f}%", _f(70), INK)
+    _ct(d, 260, 590, "단톡 생존율", _f(26), MUTED)
+    _ct(d, 260, 712, _clean(survival_label), _fit(d, _clean(survival_label), 360, 28), MINT)
+    _ct(d, 720, 410, "베프 짝꿍 1위", _f(30), MUTED)
+    if pairs:
+        a, b, chem, n = pairs[0]
+        c = f"{_short(a)} & {_short(b)}"
+        _ct(d, 720, 460, c, _fit(d, c, 470, 60), INK)
+        _ct(d, 720, 550, f"케미 {chem:.0f} · 서로 답장 {int(n)}회", _f(30), MINT)
+        yy = 620
+        for i, (a, b, chem, n) in enumerate(pairs[1:3]):
+            c = f"{i + 2}위  {_short(a)} & {_short(b)}"
+            _ct(d, 720, yy, c, _fit(d, c, 470, 34), (110, 110, 110))
+            yy += 54
+
+    y = 800
+    _ct(d, cx, y, "우리 단톡방 역할", _f(34), MINT)
+    y += 76
+    tiles = roles[:6]
+    for i, (_, name, who, desc) in enumerate(tiles):
+        col, row = i % 2, i // 2
+        bx0, by0 = 110 + col * 440, y + row * 225
+        if i == len(tiles) - 1 and len(tiles) % 2 == 1:
+            bx0 = 330
+        d.rounded_rectangle((bx0, by0, bx0 + 420, by0 + 200), radius=30, fill=MINT_SOFT if i % 3 != 1 else SUN_SOFT)
+        _ct(d, bx0 + 210, by0 + 24, _clean(name), _fit(d, _clean(name), 380, 30), MINT)
+        w = _short(who)
+        _ct(d, bx0 + 210, by0 + 68, w, _fit(d, w, 380, 50), INK)
+        _ct(d, bx0 + 210, by0 + 140, _clean(desc), _fit(d, _clean(desc), 370, 26), MUTED)
+    _ct(d, cx, 1830, "재미로 보는 분석  ·  카톡 관계 분석기", _f(30), WHITE)
+    return _png(img)
+
+
+# ─────────────── 팀플 카드 ───────────────
+NAVY, SKY, SKY_SOFT, RED = (40, 60, 130), (60, 120, 255), (232, 240, 255), (240, 70, 80)
+
+
+def make_team_card(room, n_members, n_msgs, period, ttype, rows, suspect):
+    """ttype=(emoji, 유형, 설명), rows=[(이름, 역할, 기여도, 무임승차지수)], suspect=(이름, 지수)"""
+    if FONT_PATH is None:
+        return None
+    img = _background((58, 96, 255), (120, 220, 255))
+    d = ImageDraw.Draw(img)
+    cx = W / 2
+    _pill(d, cx, 92, "KAKAOTALK  TEAM  REPORT", _f(26), WHITE, (100, 140, 255), 26, 12)
+    title = _clean(room) or "우리 팀플방"
+    _ct(d, cx, 166, title, _fit(d, title, 900, 72), WHITE)
+    _ct(d, cx, 272, f"{n_members}명  ·  메시지 {n_msgs:,}개  ·  {period}", _f(30), WHITE)
+    _panel(img, (60, 340, 1020, 1790))
+    d = ImageDraw.Draw(img)
+
+    y = _pill(d, cx, 390, "팀 유형", _f(30), SKY, SKY_SOFT, 30, 12)
+    _ct(d, cx, y + 18, _clean(ttype[1]), _fit(d, _clean(ttype[1]), 860, 80), INK)
+    for line in _wrap(d, _clean(ttype[2]), _f(32), 820)[:2]:
+        _ct(d, cx, y + 128, line, _f(32), MUTED)
+        y += 44
+
+    # 기여도 막대
+    y = 700
+    _ct(d, cx, y, "기여도 랭킹", _f(32), SKY)
+    y += 66
+    for i, (name, role, contrib, fr) in enumerate(rows[:6]):
+        nm = _short(name)
+        d.text((120, y + 4), f"{i + 1}", font=_f(36), fill=SKY if i == 0 else MUTED)
+        d.text((175, y), nm, font=_fit(d, nm, 170, 38), fill=INK)
+        rl = _clean(role)
+        d.text((175, y + 48), rl, font=_fit(d, rl, 190, 24), fill=MUTED)
+        bx0, bx1 = 380, 860
+        d.rounded_rectangle((bx0, y + 14, bx1, y + 58), radius=22, fill=(238, 242, 250))
+        col = SKY if fr < 50 else (RED if fr >= 70 else (250, 170, 60))
+        d.rounded_rectangle((bx0, y + 14, bx0 + max((bx1 - bx0) * contrib / 100, 44), y + 58), radius=22, fill=col)
+        d.text((878, y + 10), f"{contrib:.0f}", font=_f(38), fill=INK)
+        y += 128
+
+    # 무임승차 의심
+    y = max(y + 20, 1480)
+    name, val = suspect
+    box_col = (255, 236, 236) if val >= 70 else ((255, 244, 225) if val >= 50 else SKY_SOFT)
+    d.rounded_rectangle((110, y, 970, y + 230), radius=36, fill=box_col)
+    if val >= 50:
+        _ct(d, cx, y + 30, "무임승차 탐지기", _f(30), RED if val >= 70 else (220, 130, 30))
+        t = f"{_short(name)}  {val:.0f}%"
+        _ct(d, cx, y + 80, t, _fit(d, t, 800, 64), INK)
+        _ct(d, cx, y + 168, "의심 지수 (재미로만 봐주세요)", _f(26), MUTED)
+    else:
+        _ct(d, cx, y + 40, "무임승차 탐지기", _f(30), SKY)
+        _ct(d, cx, y + 95, "무임승차 없음!", _f(64), INK)
+    _ct(d, cx, 1830, "재미로 보는 분석  ·  카톡 관계 분석기", _f(30), WHITE)
+    return _png(img)

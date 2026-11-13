@@ -1,5 +1,5 @@
 """
-💘 카톡 썸 분석기
+💘 카톡 관계 분석기 (썸 · 친구 · 팀플)
 실행:  streamlit run app.py
 """
 
@@ -12,7 +12,7 @@ import streamlit as st
 import analyzer as A
 from share_card import make_card, make_group_card
 
-st.set_page_config(page_title="카톡 썸 분석기", page_icon="💘", layout="wide")
+st.set_page_config(page_title="카톡 관계 분석기", page_icon="💘", layout="wide")
 
 PINK, BLUE = "#ff5c8a", "#5c8aff"
 MAX_MB = 50
@@ -20,6 +20,19 @@ MAX_MB = 50
 st.markdown(
     """
     <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+    .stApp, .stMarkdown, .stMarkdown p, h1, h2, h3, h4, label, [data-testid="stMetricValue"],
+    [data-testid="stMetricLabel"], .stTabs button p {font-family: 'Pretendard', -apple-system, sans-serif !important;}
+    h2, h3 {font-weight: 800 !important; letter-spacing: -0.02em;}
+    [data-testid="stMetric"] {background:#fff; border:1px solid #f0e6ea; border-radius:18px; padding:.8rem 1rem;
+                              box-shadow: 0 4px 14px rgba(255,92,138,.06);}
+    .stTabs [data-baseweb="tab"] {font-weight:700;}
+    .hero {border-radius: 26px; padding: 1.8rem 1.5rem 1.5rem; text-align:center; color:white; margin-bottom:1rem;
+           box-shadow: 0 10px 30px rgba(0,0,0,.08);}
+    .hero h1 {color:white !important; font-size:2.6rem; font-weight:900; margin:0; padding:0;}
+    .hero p {color:rgba(255,255,255,.92); margin:.3rem 0 0; font-size:1.05rem;}
+    .card, .award, .hl {transition: transform .15s ease;}
+    .award:hover, .hl:hover {transform: translateY(-2px);}
     .big-title {font-size: 2.8rem; font-weight: 800; text-align:center; margin-bottom:0;
                 background: linear-gradient(90deg,#ff5c8a,#ffb199);
                 -webkit-background-clip: text; -webkit-text-fill-color: transparent;}
@@ -90,10 +103,22 @@ def rain_hearts(n=28):
 # ─────────────────────────────────────────────
 # 사이드바
 # ─────────────────────────────────────────────
+MODES = {
+    "💘 썸": ("💘 카톡 썸 분석기", "그 사람 마음, 숫자로 확인해 보세요", "linear-gradient(120deg,#ff5c8a,#ffb199)",
+              {"💑 1:1 썸 샘플": A.make_sample, "👥 단톡방 샘플": A.make_group_sample}),
+    "👯 친구": ("👯 카톡 우정 분석기", "우리 우정, 몇 도일까?", "linear-gradient(120deg,#16b894,#ffd15c)",
+              {"👯 1:1 친구 샘플": A.make_friend_sample, "👥 단톡방 샘플": A.make_group_sample}),
+    "🛠️ 팀플": ("🛠️ 카톡 팀플 분석기", "누가 캐리하고, 누가 묻어갔을까?", "linear-gradient(120deg,#3a60ff,#78dcff)",
+              {"🛠️ 팀플 단톡 샘플": A.make_team_sample}),
+}
+
 with st.sidebar:
+    st.header("🔮 분석 모드")
+    MODE = st.radio("분석 모드", list(MODES), index=0, horizontal=True, label_visibility="collapsed")
+    st.divider()
     st.header("📂 대화 불러오기")
     up = st.file_uploader("카카오톡 대화 내보내기 파일 (.txt / .csv)", type=["txt", "csv"])
-    sample = st.radio("또는 샘플로 체험", ["💑 1:1 썸 샘플", "👥 단톡방 샘플"], index=0,
+    sample = st.radio("또는 샘플로 체험", list(MODES[MODE][3]), index=0,
                       disabled=up is not None, horizontal=False)
     with st.expander("📱 내보내기 방법"):
         st.markdown(
@@ -116,9 +141,8 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 # 데이터 로딩
 # ─────────────────────────────────────────────
-st.markdown('<div class="big-title">💘 카톡 썸 분석기</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub">대화 내보내기 파일만 넣으면, 그 사람 마음을 숫자로 보여드립니다</div>',
-            unsafe_allow_html=True)
+_t, _s, _g, _ = MODES[MODE]
+st.markdown(f'<div class="hero" style="background:{_g}"><h1>{_t}</h1><p>{_s}</p></div>', unsafe_allow_html=True)
 
 is_sample = up is None
 try:
@@ -130,7 +154,7 @@ try:
             raw_df = load(up.getvalue(), up.name)
             ROOM = A.room_name(up.getvalue())
     else:
-        text = A.make_sample() if sample.startswith("💑") else A.make_group_sample()
+        text = MODES[MODE][3][sample]()
         raw_df = load(text.encode("utf-8"), "sample.txt")
         ROOM = A.room_name(text.encode("utf-8"))
 except Exception as e:  # noqa: BLE001
@@ -160,6 +184,14 @@ if len(senders) < 2:
 
 if is_sample:
     st.info("👀 지금은 **샘플 대화**를 보여주는 중이에요. 왼쪽에서 내 카톡 파일을 올려보세요!")
+
+if MODE != "💘 썸":
+    import ui_modes
+    if MODE == "👯 친구":
+        ui_modes.render_friend(df_all, ROOM, pseudo, hours)
+    else:
+        ui_modes.render_team(df_all, ROOM, pseudo)
+    st.stop()
 
 is_group = len(senders) > 2
 tab_names = ["💘 1:1 썸 분석"] + (["👥 단톡방 분석"] if is_group else []) + ["ℹ️ 분석 방법"]
