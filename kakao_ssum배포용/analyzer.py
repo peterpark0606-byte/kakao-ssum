@@ -152,6 +152,12 @@ RE_LONGNUM = re.compile(r"\d{6,}[-\d]*")
 RE_URL = re.compile(r"https?://\S+")
 
 
+def short_name(name: str) -> str:
+    """'박영우(아시아경제)' → '박영우' (괄호 속 소속 제거, 화면 표시용)"""
+    s = re.sub(r"\s*[\(\[（【].*?[\)\]）】]\s*", "", str(name)).strip()
+    return s or str(name)
+
+
 def mask_text(s: pd.Series) -> pd.Series:
     return (s.str.replace(RE_URL, "[링크]", regex=True)
              .str.replace(RE_PHONE, "[전화번호]", regex=True)

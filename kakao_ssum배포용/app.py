@@ -47,7 +47,7 @@ st.markdown(
 # ─────────────────────────────────────────────
 # 캐시된 로딩/분석
 # ─────────────────────────────────────────────
-CACHE_VER = "v3"  # 분석 로직이 바뀌면 숫자를 올려서 예전 캐시를 무시
+CACHE_VER = "v4"  # 분석 로직이 바뀌면 숫자를 올려서 예전 캐시를 무시
 
 
 @st.cache_data(show_spinner=False)
@@ -66,12 +66,12 @@ def run_group(df, ver=CACHE_VER):
 
 
 @st.cache_data(show_spinner=False)
-def card_png(a, b, title, desc, temp, score_a, stats, couple, ta, tb, prob, when):
+def card_png(a, b, title, desc, temp, score_a, stats, couple, ta, tb, prob, when, ver=CACHE_VER):
     return make_card(a, b, title, desc, temp, score_a, stats, couple, ta, tb, prob, when)
 
 
 @st.cache_data(show_spinner=False)
-def group_card_png(room, n, msgs, period, awards, pairs):
+def group_card_png(room, n, msgs, period, awards, pairs, ver=CACHE_VER):
     return make_group_card(room, n, msgs, period, awards, pairs)
 
 
@@ -385,7 +385,7 @@ if tab_group is not None:
             cols = st.columns(len(G["awards"]))
             for col, (e, n, who, d) in zip(cols, G["awards"]):
                 col.markdown(f'<div class="award"><div class="e">{e}</div><div class="n">{n}</div>'
-                             f'<div style="font-size:1.2rem;font-weight:700;color:{PINK}">{who}</div>'
+                             f'<div style="font-size:1.2rem;font-weight:700;color:{PINK}">{A.short_name(who)}</div>'
                              f'<div class="d">{d}</div></div>', unsafe_allow_html=True)
 
             st.subheader("💘 썸 의심 커플 TOP 3")
@@ -395,23 +395,40 @@ if tab_group is not None:
             for i, (col, (_, r)) in enumerate(zip(pc, top.iterrows())):
                 medal = ["🥇", "🥈", "🥉"][i]
                 spd = "-" if pd.isna(r["평균 답장(분)"]) else f"{r['평균 답장(분)']:.1f}분"
-                col.markdown(f'<div class="award"><div class="e">{medal}</div><div class="n">{r["커플"]}</div>'
+                col.markdown(f'<div class="award"><div class="e">{medal}</div><div class="n">{A.short_name(r["a"])} ♥ {A.short_name(r["b"])}</div>'
                              f'<div class="d">케미 지수 {r["케미 지수"]:.0f} · 서로 답장 {r["주고받은 답장"]}회 · '
                              f'평균 {spd}</div></div>', unsafe_allow_html=True)
             if len(top):
                 st.caption(f"👉 1:1 탭에서 **{top.iloc[0]['a']}**·**{top.iloc[0]['b']}** 커플을 골라 정밀 분석해 보세요!")
 
             st.subheader("🕸️ 누가 누구에게 답할까? — 답장 관계도")
+            short = {m: A.short_name(m) for m in G["members"]}
+            if len(set(short.values())) < len(short):  # 줄였더니 이름이 겹치면 원래 이름 사용
+                short = {m: m for m in G["members"]}
+            order = [short[m] for m in G["members"]]
             mat = G["matrix"].reset_index().melt(id_vars="sender", var_name="받은 사람", value_name="답장 수")
             mat = mat.rename(columns={"sender": "답한 사람"})
             mat = mat[mat["답한 사람"] != mat["받은 사람"]]
-            heat = alt.Chart(mat).mark_rect(cornerRadius=4).encode(
-                x=alt.X("받은 사람:N", sort=G["members"], title="이 사람 말에 →"),
-                y=alt.Y("답한 사람:N", sort=G["members"], title="← 이 사람이 답함"),
-                color=alt.Color("답장 수:Q", scale=alt.Scale(scheme="pinkyellowgreen", reverse=True), title=""),
+            mat["답한 사람"] = mat["답한 사람"].map(short)
+            mat["받은 사람"] = mat["받은 사람"].map(short)
+            vmax = max(int(mat["답장 수"].max()), 1)
+            base = alt.Chart(mat).encode(
+                x=alt.X("받은 사람:N", sort=order, title="이 사람 말에 →",
+                        axis=alt.Axis(orient="top", labelAngle=0, labelFontSize=13, labelFontWeight="bold",
+                                      ticks=False, domain=False, labelPadding=8)),
+                y=alt.Y("답한 사람:N", sort=order, title="← 이 사람이 답함",
+                        axis=alt.Axis(labelFontSize=13, labelFontWeight="bold", ticks=False, domain=False,
+                                      labelPadding=8)))
+            heat = base.mark_rect(cornerRadius=8, stroke="white", strokeWidth=3).encode(
+                color=alt.Color("답장 수:Q", title="답장 수",
+                                scale=alt.Scale(range=["#fff4f7", "#ffb3c9", "#ff5c8a", "#c2185b"], domainMin=0)),
                 tooltip=["답한 사람", "받은 사람", "답장 수"])
-            text = heat.mark_text(fontWeight="bold").encode(text="답장 수:Q", color=alt.value("#333"))
-            st.altair_chart((heat + text).properties(height=60 * len(G["members"]) + 40), use_container_width=True)
+            text = base.mark_text(fontWeight="bold", fontSize=14).encode(
+                text="답장 수:Q",
+                color=alt.condition(f"datum['답장 수'] >= {vmax * 0.6}", alt.value("white"), alt.value("#5a3a46")))
+            n = len(G["members"])
+            st.altair_chart((heat + text).properties(height=58 * n + 30, width=110 * n), use_container_width=False)
+            st.caption("칸이 진할수록 그 사람 말에 자주(10분 안에) 답했다는 뜻이에요. 대각선은 본인이라 비워뒀어요.")
 
             st.subheader("📋 멤버별 기록")
             rk = G["rank"].copy()
