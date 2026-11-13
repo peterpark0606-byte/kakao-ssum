@@ -149,6 +149,62 @@ def make_card(a, b, title, desc, temp, score_a, stats, badges_a, badges_b):
     return buf.getvalue()
 
 
+def make_group_card(room, n_members, n_msgs, period, awards, pairs):
+    """단톡방 결과 카드. awards=[(emoji,상,이름,설명)], pairs=[(a,b,케미지수,답장수)]"""
+    if FONT_PATH is None:
+        return None
+    W, H = 1080, 1920
+    img = Image.new("RGB", (W, H))
+    d = ImageDraw.Draw(img)
+    top, bottom = (120, 110, 255), (255, 140, 180)
+    for y in range(H):
+        t = y / H
+        d.line([(0, y), (W, y)], fill=tuple(int(top[i] * (1 - t) + bottom[i] * t) for i in range(3)))
+    for x, y, r in [(110, 250, 50), (960, 170, 70), (930, 1840, 45), (120, 1830, 40)]:
+        d.text((x - r, y - r), "♥", font=_f(r * 2), fill=(235, 225, 255))
+
+    WHITE, DARK, GREY, PINK, PURPLE = (255, 255, 255), (60, 40, 50), (160, 150, 170), (255, 92, 138), (120, 110, 255)
+    _center(d, 110, "KAKAOTALK GROUP REPORT", _f(40), WHITE)
+    title = _clean(room) or "우리 단톡방"
+    _center(d, 175, _wrap(d, title, _f(62), 900)[0], _f(62), WHITE)
+    _center(d, 260, f"{n_members}명 · 메시지 {n_msgs:,}개 · {period}", _f(34), WHITE)
+
+    d.rounded_rectangle((70, 340, 1010, 1780), radius=50, fill=WHITE)
+
+    # 어워즈
+    _center(d, 390, "단톡방 어워즈", _f(44), PURPLE)
+    y = 470
+    for _, name, who, desc in awards[:5]:
+        d.rounded_rectangle((130, y, 950, y + 100), radius=50, fill=(245, 242, 255))
+        d.text((175, y + 26), _clean(name), font=_f(40), fill=GREY)
+        wtxt = _clean(who)
+        d.text((905 - d.textlength(wtxt, font=_f(46)), y + 20), wtxt, font=_f(46), fill=DARK)
+        y += 120
+
+    # 썸 의심 커플
+    y += 30
+    _center(d, y, "썸 의심 커플 TOP 3", _f(44), PINK)
+    y += 80
+    for i, (a, b, chem, n) in enumerate(pairs[:3]):
+        rank = f"{i + 1}위"
+        d.text((150, y + 4), rank, font=_f(40), fill=PINK if i == 0 else GREY)
+        couple = f"{_clean(a)} ♥ {_clean(b)}"
+        d.text((270, y), couple, font=_f(48 if i == 0 else 42), fill=DARK)
+        meta = f"케미 {chem:.0f}"
+        d.text((930 - d.textlength(meta, font=_f(34)), y + 8), meta, font=_f(34), fill=GREY)
+        y += 115
+    if pairs:
+        a, b, chem, n = pairs[0]
+        _center(d, y + 10, f"{_clean(a)}·{_clean(b)}, 서로에게 {int(n)}번이나 바로 답장했어요", _f(34), PINK)
+
+    _center(d, 1690, "케미 지수 = 서로에게 10분 안에 답한 비율", _f(30), GREY)
+    _center(d, 1820, "재미로 보는 분석 · 카톡 썸 분석기", _f(32), WHITE)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 def _rep(s):
     r = s["답장 속도(분, 중앙값)"]
     return "-" if (r is None or (isinstance(r, float) and math.isnan(r))) else f"{r:.0f}분"

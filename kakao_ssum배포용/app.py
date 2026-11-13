@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 import analyzer as A
-from share_card import FONT_PATH, make_card
+from share_card import make_card, make_group_card
 
 st.set_page_config(page_title="카톡 썸 분석기", page_icon="💘", layout="wide")
 
@@ -67,6 +67,11 @@ def card_png(a, b, title, desc, temp, score_a, stats, ba, bb):
     return make_card(a, b, title, desc, temp, score_a, stats, ba, bb)
 
 
+@st.cache_data(show_spinner=False)
+def group_card_png(room, n, msgs, period, awards, pairs):
+    return make_group_card(room, n, msgs, period, awards, pairs)
+
+
 def chips(items, color):
     return "".join(f'<span class="chip" style="color:{color};border-color:{color}55;background:{color}12" '
                    f'title="{d}">{e} {n}</span>' for e, n, d in items)
@@ -120,9 +125,11 @@ try:
             st.stop()
         with st.spinner("대화를 읽는 중... 💌"):
             raw_df = load(up.getvalue(), up.name)
+            ROOM = A.room_name(up.getvalue())
     else:
         text = A.make_sample() if sample.startswith("💑") else A.make_group_sample()
         raw_df = load(text.encode("utf-8"), "sample.txt")
+        ROOM = A.room_name(text.encode("utf-8"))
 except Exception as e:  # noqa: BLE001
     st.error("파일을 읽다가 문제가 생겼어요 😢 카카오톡에서 내보낸 원본 파일이 맞는지 확인해 주세요.")
     with st.expander("오류 자세히"):
@@ -383,6 +390,26 @@ if tab_group is not None:
                 x=alt.X("hour:O", title="시"), y=alt.Y("메시지:Q", stack="zero"),
                 color=alt.Color("sender:N", title=""), tooltip=["hour", "sender", "메시지"]
             ).properties(height=300), use_container_width=True)
+
+            # ── 단톡방 결과 카드
+            st.subheader("📸 단톡방 결과 카드")
+            default_room = "우리 단톡방" if (pseudo or not ROOM) else ROOM
+            room = st.text_input("카드에 들어갈 방 이름", default_room, max_chars=20)
+            gmin, gmax = gdf["time"].min(), gdf["time"].max()
+            period = f"{gmin:%y.%m.%d}~{gmax:%m.%d}"
+            pair_list = [(r["a"], r["b"], r["케미 지수"], r["주고받은 답장"]) for _, r in G["pairs"].head(3).iterrows()]
+            gpng = group_card_png(room, len(G["members"]), len(gdf), period, G["awards"], pair_list)
+            if gpng:
+                gc1, gc2 = st.columns([1, 1.4])
+                gc1.image(gpng, use_container_width=True)
+                with gc2:
+                    st.markdown("단톡방에 바로 올리기 좋은 인스타 스토리 사이즈예요.\n\n"
+                                "- 방 이름은 위 칸에서 자유롭게 바꿀 수 있어요.\n"
+                                "- 멤버 실명이 걱정되면 **가명 처리**를 켜고 받으세요.")
+                    st.download_button("⬇️ 단톡방 카드 다운로드 (PNG)", gpng, file_name="group_report.png",
+                                       mime="image/png", type="primary", use_container_width=True)
+            else:
+                st.warning("한글 폰트를 찾지 못해 카드를 만들 수 없어요.")
 
 # ═════════════════════════════════════════════
 # 분석 방법 탭

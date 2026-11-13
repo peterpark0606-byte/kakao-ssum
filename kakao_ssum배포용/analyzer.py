@@ -123,6 +123,16 @@ def parse_txt(text: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["time", "sender", "message"])
 
 
+def room_name(raw: bytes) -> str:
+    """내보내기 첫 줄('OOO 님과 카카오톡 대화')에서 방 이름 추출"""
+    head = decode_bytes(raw).splitlines()[:3]
+    for line in head[:3]:
+        m = re.match(r"^\s*(.+?)\s*(?:\d+\s*)?님과 카카오톡 대화", line)
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
 def parse_kakao(raw: bytes, filename: str) -> pd.DataFrame:
     text = decode_bytes(raw)
     df = parse_csv(text) if filename.lower().endswith(".csv") else parse_txt(text)
