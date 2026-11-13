@@ -63,8 +63,8 @@ def run_group(df):
 
 
 @st.cache_data(show_spinner=False)
-def card_png(a, b, title, desc, temp, score_a, stats, ba, bb):
-    return make_card(a, b, title, desc, temp, score_a, stats, ba, bb)
+def card_png(a, b, title, desc, temp, score_a, stats, couple, ta, tb, prob, when):
+    return make_card(a, b, title, desc, temp, score_a, stats, couple, ta, tb, prob, when)
 
 
 @st.cache_data(show_spinner=False)
@@ -197,6 +197,39 @@ with tab_pair:
     trend_txt = "📈 상승세" if R["trend"] > 0.1 else ("📉 하락세" if R["trend"] < -0.1 else "➡️ 유지")
     m4.metric("최근 7일 흐름", trend_txt, f"{R['recent'] - R['prev']:+d}개 (직전 7일 대비)")
 
+    # ── 썸 유형 + 고백 성공 확률
+    st.write("")
+    cn, cd = R["couple"]
+    CF = R["confess"]
+    st.markdown(
+        f"""
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <div class="card" style="flex:1.3;min-width:300px">
+            <div style="color:#ff5c8a;font-weight:700">🧬 우리의 썸 유형</div>
+            <div style="font-size:1.8rem;font-weight:800;margin:.2rem 0">{cn}</div>
+            <div style="color:#888;margin-bottom:.8rem">{cd}</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <div style="flex:1;min-width:180px;background:#eef2ff;border-radius:16px;padding:.8rem 1rem">
+                <div style="color:{BLUE};font-weight:700">{a}</div>
+                <div style="font-size:1.25rem;font-weight:800">{R['types'][a][0]}</div>
+                <div style="color:#666;font-size:.9rem">{R['types'][a][1]}</div></div>
+              <div style="flex:1;min-width:180px;background:#ffeef4;border-radius:16px;padding:.8rem 1rem">
+                <div style="color:{PINK};font-weight:700">{b}</div>
+                <div style="font-size:1.25rem;font-weight:800">{R['types'][b][0]}</div>
+                <div style="color:#666;font-size:.9rem">{R['types'][b][1]}</div></div>
+            </div>
+          </div>
+          <div class="card" style="flex:1;min-width:280px;text-align:center;background:linear-gradient(135deg,#fff4ea,#fff0f5)">
+            <div style="color:#f08a24;font-weight:700">💍 {b}님에게 고백하면?</div>
+            <div style="font-size:3.6rem;font-weight:900;color:#f08a24;line-height:1.1;margin:.3rem 0">{CF['prob']:.0f}%</div>
+            <div style="font-weight:700;margin-bottom:.6rem">{CF['label']}</div>
+            <div style="background:#fff;border-radius:999px;padding:.45rem .9rem;display:inline-block;font-weight:700">
+              📅 추천 타이밍: {CF['when']} · {CF['dday']}</div>
+            <div style="color:#999;font-size:.85rem;margin-top:.4rem">{CF['why']}</div>
+          </div>
+        </div>
+        """.replace("\n", " ").strip(), unsafe_allow_html=True)
+
     # ── 칭호
     st.subheader("🏅 획득한 칭호")
     b1, b2 = st.columns(2)
@@ -320,7 +353,8 @@ with tab_pair:
 
     # ── 공유 카드
     st.subheader("📸 결과 카드 공유하기")
-    png = card_png(a, b, R["title"], R["desc"], R["temp"], R["score_a"], S, R["badges"][a], R["badges"][b])
+    png = card_png(a, b, R["title"], R["desc"], R["temp"], R["score_a"], S, R["couple"],
+                   R["types"][a], R["types"][b], R["confess"]["prob"], R["confess"]["when"])
     if png:
         pc1, pc2 = st.columns([1, 1.4])
         pc1.image(png, use_container_width=True)
@@ -433,7 +467,12 @@ with tab_info:
 **2. 썸 온도 (0~100°)** — 관계 전체가 얼마나 뜨거운지
 하루 메시지 양(30) + 답장 속도(25) + 새벽 대화 비율(15) + 최근 2주 증가세(15) + 애정 표현 빈도(15)
 
-**3. 판정**
+**3. 고백 성공 확률** — 썸 온도 × 0.55 + 마음의 균형(지분이 50:50에 가까울수록 ↑) × 0.30 + 최근 증가세 × 15  
+추천 타이밍은 상대가 메시지를 가장 많이 보낸 요일과 시간대예요.
+
+**4. 썸 유형** — 선톡 비율로 직진러 / 밀당러 / 츤데레를 나누고, 가장 두드러진 대화 습관(새벽감성, 칼답, ㅋㅋ폭격 등)을 앞에 붙여요.
+
+**5. 판정**
 - 온도 55° 이상 + 지분 차이 7%p 미만 → 💞 쌍방 썸
 - 온도 55° 이상 + 한쪽 쏠림 → 🔥 한쪽이 더 달아오름
 - 온도 55° 미만 + 균형 → 🧊 미지근한 친구

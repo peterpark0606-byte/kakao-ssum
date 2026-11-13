@@ -514,13 +514,94 @@ def tips(sa, sb, a, b, trend):
     return t
 
 
+# ─── 썸 MBTI(유형) ───
+def person_type(s: dict, other: dict) -> tuple[str, str]:
+    """(유형 이름, 한 줄 설명)"""
+    tot = s["선톡 횟수"] + other["선톡 횟수"]
+    share = s["선톡 횟수"] / tot if tot else 0.5
+    if share >= 0.56:
+        tail, tail_d = "직진러", "먼저 다가가는 타입"
+    elif share <= 0.44:
+        tail, tail_d = "츤데레", "먼저 연락은 안 해도 오면 반기는 타입"
+    else:
+        tail, tail_d = "밀당러", "주고받는 균형을 아는 타입"
+    r = s["답장 속도(분, 중앙값)"]
+    n = max(s["메시지 수"], 1)
+    traits = [
+        (s["새벽 메시지"] / n >= 0.08, "새벽감성", "밤이 깊을수록 말이 많아지고"),
+        (not math.isnan(r) and r < 1.5, "칼답", "알림 뜨자마자 답하고"),
+        (s["ㅋ/메시지"] >= 1.2, "ㅋㅋ폭격", "리액션이 늘 빵빵하고"),
+        (s["질문 비율"] >= 0.25, "궁금증폭발", "질문으로 대화를 이어가고"),
+        (s["애정 표현"] >= 8, "꿀떨어지는", "애정 표현을 아끼지 않고"),
+        (s["평균 글자 수"] >= 18, "장문러", "한 번 말하면 길게 하고"),
+        (s["이모티콘/사진"] / n >= 0.12, "이모티콘", "말보다 이모티콘이 빠르고"),
+        (0 < s["평균 글자 수"] < 6, "단답", "짧고 굵게 말하고"),
+        (not math.isnan(r) and r >= 20, "느긋", "답장은 느려도 꾸준하고"),
+    ]
+    for ok, name, d in traits:
+        if ok:
+            return f"{name} {tail}", f"{d}, {tail_d}"
+    return f"무난 {tail}", f"모든 게 평균이고, {tail_d}"
+
+
+COUPLE_NAMES = {
+    "💞": ("자석 커플", "서로 끌어당기는 중"),
+    "🔥": ("불꽃 × 성냥 커플", "한쪽은 활활, 한쪽은 이제 막 불붙는 중"),
+    "🧊": ("적금 커플", "천천히, 꾸준히 쌓이는 중"),
+    "💔": ("해바라기 커플", "한 사람만 바라보는 중"),
+}
+
+DAYS = "월화수목금토일"
+
+
+def _hour_txt(h):
+    part = "새벽" if h < 5 else ("오전" if h < 12 else ("오후" if h < 18 else "밤"))
+    return f"{part} {h % 12 or 12}시"
+
+
+def confession(df: pd.DataFrame, temp, score_a, trend, b, today=None):
+    """고백 성공 확률(%)과 추천 타이밍"""
+    balance = 100 - 2 * abs(score_a - 50)
+    p = 0.55 * temp + 0.30 * balance + 15 * (0.5 + trend / 2)
+    p = max(5, min(97, p))
+    if p >= 80:
+        label = "지금 바로 GO! 🚀"
+    elif p >= 60:
+        label = "분위기만 조금 더 띄우면 성공각 ✨"
+    elif p >= 40:
+        label = "아직은 이르다. 2주만 더 쌓자 ⏳"
+    else:
+        label = "고백보다 친해지기가 먼저 🌱"
+    d = df[df["sender"] == b]
+    d = d if len(d) >= 10 else df
+    wd = int(d["time"].dt.weekday.value_counts().idxmax())
+    hr = int(d["hour"].value_counts().idxmax())
+    today = today or datetime.now()
+    ahead = (wd - today.weekday()) % 7
+    if ahead == 0 and today.hour >= hr:
+        ahead = 7
+    day = today + timedelta(days=ahead)
+    when = f"{DAYS[wd]}요일 {_hour_txt(hr)}"
+    dday = "D-DAY 오늘!" if ahead == 0 else f"D-{ahead} ({day:%m/%d} {DAYS[wd]})"
+    why = f"{b}님이 가장 활발하게 답하는 요일·시간대예요"
+    return {"prob": p, "label": label, "when": when, "dday": dday, "why": why}
+
+
 def analyze_pair(df_all: pd.DataFrame, a: str, b: str, new_conv_hours=6) -> dict:
     df = enrich(df_all[df_all["sender"].isin([a, b])], new_conv_hours)
     sa, sb = person_stats(df, a), person_stats(df, b)
     score_a, parts = heart_share(sa, sb)
     T = temperature(df)
     emoji, title, desc = verdict(T["temp"], score_a, a, b)
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+    except Exception:  # noqa: BLE001
+        now = datetime.now()
     return {
+        "types": {a: person_type(sa, sb), b: person_type(sb, sa)},
+        "couple": COUPLE_NAMES[emoji],
+        "confess": confession(df, T["temp"], score_a, T["trend"], b, now),
         "df": df, "stats": {a: sa, b: sb}, "score_a": score_a, "parts": parts, **T,
         "emoji": emoji, "title": title, "desc": desc,
         "badges": {a: badges(sa, sb), b: badges(sb, sa)},

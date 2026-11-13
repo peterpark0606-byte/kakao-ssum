@@ -1,7 +1,6 @@
 """
-share_card.py — 인스타 스토리(1080x1920) 비율 결과 카드 PNG 생성
-한글 폰트를 OS별 기본 경로에서 자동으로 찾습니다.
-fonts/ 폴더에 .ttf/.otf를 넣어두면 그걸 우선 사용합니다.
+share_card.py — 인스타 스토리(1080x1920) 결과 카드 PNG 생성
+fonts/ 폴더의 한글 폰트를 우선 사용하고, 없으면 OS 기본 폰트를 찾습니다.
 """
 
 import glob
@@ -10,21 +9,15 @@ import math
 import os
 import re
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONT_CANDIDATES = [
     *sorted(glob.glob(os.path.join(HERE, "fonts", "*.[ot]tf"))),
-    # Windows
     "C:/Windows/Fonts/malgunbd.ttf", "C:/Windows/Fonts/malgun.ttf",
-    # macOS
     "/System/Library/Fonts/AppleSDGothicNeo.ttc", "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-    "/Library/Fonts/AppleGothic.ttf",
-    # Linux / Streamlit Cloud (packages.txt 에 fonts-nanum)
-    "/usr/share/fonts/truetype/nanum/NanumGothicExtraBold.ttf", "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
-    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
 ]
 
 
@@ -32,22 +25,35 @@ def find_font():
     for p in FONT_CANDIDATES:
         if os.path.exists(p):
             return p
-    # 마지막 수단: 시스템 폰트 폴더에서 한글 폰트 이름으로 검색
     for pat in ("*Nanum*", "*CJK*KR*", "*CJK*", "*malgun*", "*Gothic*"):
         for root in ("/usr/share/fonts", "/usr/local/share/fonts", "C:/Windows/Fonts", "/Library/Fonts"):
-            hits = glob.glob(os.path.join(root, "**", pat), recursive=True)
-            hits = [h for h in hits if h.lower().endswith((".ttf", ".otf", ".ttc"))]
+            hits = [h for h in glob.glob(os.path.join(root, "**", pat), recursive=True)
+                    if h.lower().endswith((".ttf", ".otf", ".ttc"))]
             if hits:
                 return sorted(hits)[0]
     return None
 
 
 FONT_PATH = find_font()
-RE_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200d]")
+RE_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u2664\u2666-\u27BF\uFE0F\u200d]")
+_FONT_CACHE = {}
+
+W, H = 1080, 1920
+WHITE = (255, 255, 255)
+INK = (45, 30, 40)
+MUTED = (165, 135, 150)
+PINK = (255, 79, 129)
+PINK_SOFT = (255, 236, 242)
+BLUE = (88, 128, 255)
+BLUE_SOFT = (236, 242, 255)
 
 
+# ─────────────── 헬퍼 ───────────────
 def _f(size):
-    return ImageFont.truetype(FONT_PATH, size)
+    size = int(size)
+    if size not in _FONT_CACHE:
+        _FONT_CACHE[size] = ImageFont.truetype(FONT_PATH, size)
+    return _FONT_CACHE[size]
 
 
 def _clean(s):
@@ -55,179 +61,239 @@ def _clean(s):
 
 
 def _short(name):
-    """'박영우(아시아경제)' → '박영우' : 괄호 속 소속 표시 제거"""
     s = re.sub(r"\s*[\(\[（【].*?[\)\]）】]\s*", "", _clean(name)).strip()
     return s or _clean(name)
 
 
-def _fit(draw, text, max_w, size, min_size=24):
-    """max_w 안에 들어갈 때까지 글자 크기를 줄인 폰트 반환"""
-    while size > min_size and draw.textlength(text, font=_f(size)) > max_w:
+def _fit(d, text, max_w, size, min_size=22):
+    while size > min_size and d.textlength(text, font=_f(size)) > max_w:
         size -= 2
     return _f(size)
 
 
-def _center(draw, y, text, font, fill):
-    w = draw.textlength(text, font=font)
-    draw.text(((1080 - w) / 2, y), text, font=font, fill=fill)
-
-
-def _wrap(draw, text, font, max_w):
+def _wrap(d, text, font, max_w):
+    """띄어쓰기 단위 줄바꿈 (한 단어가 너무 길면 글자 단위)"""
     lines, cur = [], ""
-    for ch in text:
-        if draw.textlength(cur + ch, font=font) > max_w and cur:
+    for word in text.split(" "):
+        trial = f"{cur} {word}".strip()
+        if d.textlength(trial, font=font) <= max_w:
+            cur = trial
+            continue
+        if cur:
             lines.append(cur)
-            cur = ch
-        else:
-            cur += ch
+        cur = ""
+        for ch in word:
+            if d.textlength(cur + ch, font=font) > max_w and cur:
+                lines.append(cur)
+                cur = ch
+            else:
+                cur += ch
     if cur:
         lines.append(cur)
     return lines
 
 
-def make_card(a, b, title, desc, temp, score_a, stats, badges_a, badges_b):
-    """결과 카드 PNG bytes 반환 (폰트가 없으면 None)"""
-    if FONT_PATH is None:
-        return None
-    W, H = 1080, 1920
-    img = Image.new("RGB", (W, H))
-    d = ImageDraw.Draw(img)
-    top, bottom = (255, 92, 138), (255, 196, 160)
+def _ct(d, cx, y, text, font, fill):
+    """가로 중앙 정렬(cx 기준) 텍스트"""
+    d.text((cx - d.textlength(text, font=font) / 2, y), text, font=font, fill=fill)
+
+
+def _pill(d, cx, y, text, font, fg, bg, pad_x=28, pad_y=14):
+    w = d.textlength(text, font=font)
+    h = font.size
+    d.rounded_rectangle((cx - w / 2 - pad_x, y, cx + w / 2 + pad_x, y + h + pad_y * 2), radius=(h + pad_y * 2) / 2, fill=bg)
+    d.text((cx - w / 2, y + pad_y - h * 0.12), text, font=font, fill=fg)
+    return y + h + pad_y * 2
+
+
+def _background(c1, c2):
+    """대각선 그라데이션 + 흐릿한 빛 번짐"""
+    grad = Image.new("RGB", (W, H))
+    g = ImageDraw.Draw(grad)
     for y in range(H):
         t = y / H
-        d.line([(0, y), (W, y)], fill=tuple(int(top[i] * (1 - t) + bottom[i] * t) for i in range(3)))
+        g.line([(0, y), (W, y)], fill=tuple(int(c1[i] * (1 - t) + c2[i] * t) for i in range(3)))
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    for (x, y, r, col) in [(120, 180, 330, (255, 255, 255, 90)), (980, 520, 280, (255, 220, 120, 70)),
+                           (60, 1500, 300, (255, 255, 255, 60)), (1000, 1800, 360, (255, 120, 200, 80))]:
+        gd.ellipse((x - r, y - r, x + r, y + r), fill=col)
+    glow = glow.filter(ImageFilter.GaussianBlur(110))
+    img = grad.convert("RGBA")
+    img.alpha_composite(glow)
+    return img
 
-    # 배경 하트 장식
-    for x, y, r in [(110, 250, 50), (960, 170, 70), (930, 1840, 45), (120, 1830, 40)]:
-        d.text((x - r, y - r), "♥", font=_f(r * 2), fill=(255, 214, 226))
 
-    WHITE, DARK, PINK, BLUE = (255, 255, 255), (60, 40, 50), (255, 92, 138), (92, 138, 255)
-    _center(d, 120, "KAKAOTALK SSUM REPORT", _f(40), WHITE)
-    head = f"{_short(a)}  ♥  {_short(b)}"
-    _center(d, 190, head, _fit(d, head, 760, 64), WHITE)
+def _panel(img, box, radius=56):
+    """그림자 있는 흰 패널"""
+    sh = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sh).rounded_rectangle((box[0], box[1] + 24, box[2], box[3] + 24), radius=radius, fill=(120, 20, 60, 70))
+    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(28)))
+    ImageDraw.Draw(img).rounded_rectangle(box, radius=radius, fill=WHITE)
 
-    # 메인 카드
-    d.rounded_rectangle((70, 320, 1010, 1780), radius=50, fill=WHITE)
-    _center(d, 380, "썸 판정", _f(38), (170, 140, 150))
-    _center(d, 440, _clean(title), _f(84), PINK)
-    y = 560
-    desc = _clean(desc).replace(_clean(a), _short(a)).replace(_clean(b), _short(b))
-    for line in _wrap(d, desc, _f(40), 820)[:3]:
-        _center(d, y, line, _f(40), DARK)
-        y += 56
 
-    # 썸 온도
-    _center(d, 740, "썸 온도", _f(38), (170, 140, 150))
-    _center(d, 790, f"{temp:.0f}°", _f(130), DARK)
-    d.rounded_rectangle((170, 960, 910, 990), radius=15, fill=(255, 228, 236))
-    d.rounded_rectangle((170, 960, 170 + 740 * min(temp, 100) / 100, 990), radius=15, fill=PINK)
+def _ring(img, cx, cy, r, width, pct, color, track=(255, 230, 238)):
+    """안티앨리어싱 원형 게이지 (3배 크게 그린 뒤 축소)"""
+    S = 3
+    size = (r * 2 + 8) * S
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    bb = (4 * S, 4 * S, size - 4 * S, size - 4 * S)
+    ld.arc(bb, 0, 360, fill=track, width=width * S)
+    end = -90 + 360 * max(0, min(pct, 100)) / 100
+    if pct > 0:
+        ld.arc(bb, -90, end, fill=color, width=width * S)
+        # 둥근 끝
+        rr = (size - 8 * S) / 2 - width * S / 2
+        for ang in (-90, end):
+            x = size / 2 + rr * math.cos(math.radians(ang))
+            y = size / 2 + rr * math.sin(math.radians(ang))
+            ld.ellipse((x - width * S / 2, y - width * S / 2, x + width * S / 2, y + width * S / 2), fill=color)
+    layer = layer.resize((r * 2 + 8, r * 2 + 8), Image.LANCZOS)
+    img.alpha_composite(layer, (int(cx - r - 4), int(cy - r - 4)))
 
-    # 마음의 지분
-    _center(d, 1040, "마음의 지분", _f(38), (170, 140, 150))
-    x0, x1, yb = 130, 950, 1100
-    split = x0 + (x1 - x0) * score_a / 100
-    d.rounded_rectangle((x0, yb, x1, yb + 80), radius=40, fill=PINK)
-    d.rounded_rectangle((x0, yb, max(split, x0 + 80), yb + 80), radius=40, fill=BLUE)
-    if split - x0 > 80:
-        d.rectangle((split - 40, yb, split, yb + 80), fill=BLUE)
-    fa, fb = f"{_short(a)} {score_a:.0f}%", f"{_short(b)} {100 - score_a:.0f}%"
-    ffa = _fit(d, fa, max(split - x0 - 50, 120), 38, 22)
-    ffb = _fit(d, fb, max(x1 - split - 50, 120), 38, 22)
-    d.text((x0 + 30, yb + 40 - ffa.size * 0.55), fa, font=ffa, fill=WHITE)
-    d.text((x1 - 30 - d.textlength(fb, font=ffb), yb + 40 - ffb.size * 0.55), fb, font=ffb, fill=WHITE)
 
-    # 핵심 수치
-    sa, sb = stats[a], stats[b]
-    rows = [("선톡", f"{sa['선톡 횟수']}회", f"{sb['선톡 횟수']}회"),
-            ("답장 속도", _rep(sa), _rep(sb)),
-            ("메시지", f"{sa['메시지 수']:,}개", f"{sb['메시지 수']:,}개")]
-    y = 1240
-    for label, va, vb in rows:
-        _center(d, y, label, _f(34), (170, 140, 150))
-        d.text((170, y - 4), va, font=_f(42), fill=BLUE)
-        d.text((910 - d.textlength(vb, font=_f(42)), y - 4), vb, font=_f(42), fill=PINK)
-        y += 80
-
-    # 뱃지
-    _center(d, 1510, "획득한 칭호", _f(34), (170, 140, 150))
-    y = 1570
-    for who, bl, col in ((a, badges_a, BLUE), (b, badges_b, PINK)):
-        names = " · ".join(_clean(n) for _, n, _ in bl[:3])
-        text = f"{_short(who)}  {names}"
-        for line in _wrap(d, text, _f(36), 840)[:2]:
-            _center(d, y, line, _f(36), col)
-            y += 50
-        y += 20
-
-    _center(d, 1820, "재미로 보는 분석 · 카톡 썸 분석기", _f(32), WHITE)
-
+def _png(img):
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
-
-
-def make_group_card(room, n_members, n_msgs, period, awards, pairs):
-    """단톡방 결과 카드. awards=[(emoji,상,이름,설명)], pairs=[(a,b,케미지수,답장수)]"""
-    if FONT_PATH is None:
-        return None
-    W, H = 1080, 1920
-    img = Image.new("RGB", (W, H))
-    d = ImageDraw.Draw(img)
-    top, bottom = (255, 92, 138), (255, 196, 160)
-    for y in range(H):
-        t = y / H
-        d.line([(0, y), (W, y)], fill=tuple(int(top[i] * (1 - t) + bottom[i] * t) for i in range(3)))
-    for x, y, r in [(110, 250, 50), (960, 170, 70), (930, 1840, 45), (120, 1830, 40)]:
-        d.text((x - r, y - r), "♥", font=_f(r * 2), fill=(255, 214, 226))
-
-    WHITE, DARK, GREY, PINK, PURPLE = (255, 255, 255), (60, 40, 50), (170, 140, 150), (255, 92, 138), (255, 92, 138)
-    _center(d, 110, "KAKAOTALK GROUP REPORT", _f(40), WHITE)
-    title = _clean(room) or "우리 단톡방"
-    _center(d, 175, title, _fit(d, title, 760, 62), WHITE)
-    _center(d, 260, f"{n_members}명 · 메시지 {n_msgs:,}개 · {period}", _f(34), WHITE)
-
-    d.rounded_rectangle((70, 340, 1010, 1780), radius=50, fill=WHITE)
-
-    # 어워즈
-    _center(d, 390, "단톡방 어워즈", _f(44), PURPLE)
-    y = 470
-    for _, name, who, desc in awards[:5]:
-        d.rounded_rectangle((130, y, 950, y + 100), radius=50, fill=(255, 240, 245))
-        d.text((175, y + 26), _clean(name), font=_f(40), fill=GREY)
-        wtxt = _short(who)
-        room_w = 905 - (175 + d.textlength(_clean(name), font=_f(40)) + 40)
-        wf = _fit(d, wtxt, room_w, 46)
-        d.text((905 - d.textlength(wtxt, font=wf), y + 50 - wf.size * 0.6), wtxt, font=wf, fill=DARK)
-        y += 120
-
-    # 썸 의심 커플
-    y += 30
-    _center(d, y, "썸 의심 커플 TOP 3", _f(44), PINK)
-    y += 80
-    for i, (a, b, chem, n) in enumerate(pairs[:3]):
-        rank = f"{i + 1}위"
-        d.text((150, y + 4), rank, font=_f(40), fill=PINK if i == 0 else GREY)
-        couple = f"{_short(a)} ♥ {_short(b)}"
-        meta = f"케미 {chem:.0f}"
-        meta_w = d.textlength(meta, font=_f(34))
-        cf = _fit(d, couple, 930 - meta_w - 30 - 260, 48 if i == 0 else 42)
-        d.text((260, y + 26 - cf.size * 0.5), couple, font=cf, fill=DARK)
-        d.text((930 - meta_w, y + 8), meta, font=_f(34), fill=GREY)
-        y += 115
-    if pairs:
-        a, b, chem, n = pairs[0]
-        for line in _wrap(d, f"{_short(a)}·{_short(b)}, 서로에게 {int(n)}번이나 바로 답장했어요", _f(34), 820)[:2]:
-            _center(d, y + 10, line, _f(34), PINK)
-            y += 48
-
-    _center(d, 1690, "케미 지수 = 서로에게 10분 안에 답한 비율", _f(30), GREY)
-    _center(d, 1820, "재미로 보는 분석 · 카톡 썸 분석기", _f(32), WHITE)
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.convert("RGB").save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
 
 def _rep(s):
     r = s["답장 속도(분, 중앙값)"]
     return "-" if (r is None or (isinstance(r, float) and math.isnan(r))) else f"{r:.0f}분"
+
+
+# ─────────────── 1:1 카드 ───────────────
+def make_card(a, b, title, desc, temp, score_a, stats, couple, type_a, type_b, prob, when):
+    """couple=(커플명, 설명), type_a/b=(유형, 설명), prob=고백 확률, when='금요일 밤 10시'"""
+    if FONT_PATH is None:
+        return None
+    img = _background((255, 94, 141), (255, 176, 134))
+    d = ImageDraw.Draw(img)
+    sa_, sb_ = _short(a), _short(b)
+    cx = W / 2
+
+    # 헤더
+    _pill(d, cx, 92, "KAKAOTALK  SSUM  REPORT", _f(26), WHITE, (255, 140, 170), 26, 12)
+    head = f"{sa_}  ♥  {sb_}"
+    _ct(d, cx, 170, head, _fit(d, head, 900, 76), WHITE)
+
+    # 패널
+    _panel(img, (60, 300, 1020, 1790))
+    d = ImageDraw.Draw(img)
+
+    # 커플 유형 + 판정
+    y = _pill(d, cx, 350, _clean(couple[0]), _fit(d, _clean(couple[0]), 700, 34), PINK, PINK_SOFT, 30, 14)
+    _ct(d, cx, y + 22, _clean(title), _fit(d, _clean(title), 860, 92), INK)
+    desc = _clean(desc).replace(_clean(a), sa_).replace(_clean(b), sb_)
+    yy = y + 150
+    for line in _wrap(d, desc, _f(36), 820)[:2]:
+        _ct(d, cx, yy, line, _f(36), MUTED)
+        yy += 50
+
+    # 두 개의 원형 게이지
+    gy = 830
+    for gx, pct, big, cap, col in ((310, temp, f"{temp:.0f}°", "썸 온도", PINK),
+                                   (770, prob, f"{prob:.0f}%", "고백 성공 확률", (255, 145, 60))):
+        _ring(img, gx, gy, 150, 26, pct, col)
+        d = ImageDraw.Draw(img)
+        _ct(d, gx, gy - 58, big, _f(84), INK)
+        _ct(d, gx, gy + 44, cap, _f(30), MUTED)
+    y = gy + 190
+    y = _pill(d, cx, y, f"추천 고백 타이밍  ·  {_clean(when)}", _fit(d, f"추천 고백 타이밍  ·  {_clean(when)}", 760, 34),
+              (230, 110, 30), (255, 241, 228), 30, 14)
+
+    # 마음의 지분
+    y += 50
+    _ct(d, cx, y, "마음의 지분", _f(30), MUTED)
+    y += 54
+    x0, x1, bh = 120, 960, 74
+    split = x0 + (x1 - x0) * score_a / 100
+    d.rounded_rectangle((x0, y, x1, y + bh), radius=bh / 2, fill=PINK)
+    d.rounded_rectangle((x0, y, max(split, x0 + bh), y + bh), radius=bh / 2, fill=BLUE)
+    if x0 + bh < split < x1 - bh:
+        d.rectangle((split - bh / 2, y, split, y + bh), fill=BLUE)
+    fa, fb = f"{sa_} {score_a:.0f}%", f"{sb_} {100 - score_a:.0f}%"
+    ffa = _fit(d, fa, max(split - x0 - 50, 110), 34, 20)
+    ffb = _fit(d, fb, max(x1 - split - 50, 110), 34, 20)
+    d.text((x0 + 30, y + bh / 2 - ffa.size * 0.62), fa, font=ffa, fill=WHITE)
+    d.text((x1 - 30 - d.textlength(fb, font=ffb), y + bh / 2 - ffb.size * 0.62), fb, font=ffb, fill=WHITE)
+
+    # 유형 두 개 (좌우 카드)
+    y += bh + 50
+    for i, (who, tp, col, soft) in enumerate(((sa_, type_a, BLUE, BLUE_SOFT), (sb_, type_b, PINK, PINK_SOFT))):
+        bx0 = 110 + i * 440
+        d.rounded_rectangle((bx0, y, bx0 + 420, y + 400), radius=34, fill=soft)
+        bcx = bx0 + 210
+        _ct(d, bcx, y + 30, who, _fit(d, who, 360, 32), col)
+        _ct(d, bcx, y + 82, _clean(tp[0]), _fit(d, _clean(tp[0]), 370, 46), INK)
+        ly = y + 160
+        for line in _wrap(d, _clean(tp[1]), _f(28), 350)[:3]:
+            _ct(d, bcx, ly, line, _f(28), (110, 90, 100))
+            ly += 40
+        st = stats[a] if i == 0 else stats[b]
+        meta = f"선톡 {st['선톡 횟수']} · 답장 {_rep(st)}"
+        d.line((bx0 + 60, y + 300, bx0 + 360, y + 300), fill=WHITE, width=3)
+        _ct(d, bcx, y + 325, meta, _fit(d, meta, 370, 30), col)
+
+    # 푸터
+    _ct(d, cx, 1830, "재미로 보는 분석  ·  카톡 썸 분석기", _f(30), WHITE)
+    return _png(img)
+
+
+# ─────────────── 단톡방 카드 ───────────────
+def make_group_card(room, n_members, n_msgs, period, awards, pairs):
+    """awards=[(emoji, 상, 이름, 설명)], pairs=[(a, b, 케미, 답장수)]"""
+    if FONT_PATH is None:
+        return None
+    img = _background((132, 108, 255), (255, 128, 170))
+    d = ImageDraw.Draw(img)
+    cx = W / 2
+
+    _pill(d, cx, 92, "KAKAOTALK  GROUP  REPORT", _f(26), WHITE, (160, 140, 255), 26, 12)
+    title = _clean(room) or "우리 단톡방"
+    _ct(d, cx, 166, title, _fit(d, title, 900, 72), WHITE)
+    _ct(d, cx, 272, f"{n_members}명  ·  메시지 {n_msgs:,}개  ·  {period}", _f(30), (245, 240, 255))
+
+    _panel(img, (60, 340, 1020, 1790))
+    d = ImageDraw.Draw(img)
+
+    # 썸 의심 커플 1위 (히어로)
+    y = 390
+    y = _pill(d, cx, y, "썸 의심 커플 1위", _f(32), PINK, PINK_SOFT, 30, 14)
+    if pairs:
+        a, b, chem, n = pairs[0]
+        couple = f"{_short(a)}  ♥  {_short(b)}"
+        _ct(d, cx, y + 24, couple, _fit(d, couple, 860, 84), INK)
+        _ring(img, cx, y + 270, 115, 22, min(chem, 100), PINK)
+        d = ImageDraw.Draw(img)
+        _ct(d, cx, y + 218, f"{chem:.0f}", _f(72), INK)
+        _ct(d, cx, y + 305, "케미 지수", _f(26), MUTED)
+        _ct(d, cx, y + 412, f"서로에게 {int(n)}번이나 10분 안에 답장했어요", _f(32), MUTED)
+        y += 490
+    # 2·3위
+    for i, (a, b, chem, n) in enumerate(pairs[1:3]):
+        bx0 = 110 + i * 440
+        d.rounded_rectangle((bx0, y, bx0 + 420, y + 130), radius=30, fill=(248, 244, 255))
+        _ct(d, bx0 + 210, y + 22, f"{i + 2}위  ·  케미 {chem:.0f}", _f(26), MUTED)
+        c = f"{_short(a)} ♥ {_short(b)}"
+        _ct(d, bx0 + 210, y + 64, c, _fit(d, c, 380, 38), INK)
+    y += 200
+
+    # 어워즈 (2열 그리드)
+    _ct(d, cx, y, "단톡방 어워즈", _f(34), (132, 108, 255))
+    y += 76
+    tiles = awards[:6]
+    for i, (_, name, who, _) in enumerate(tiles):
+        col, row = i % 2, i // 2
+        bx0, by0 = 110 + col * 440, y + row * 160
+        if i == len(tiles) - 1 and len(tiles) % 2 == 1:
+            bx0 = 330
+        d.rounded_rectangle((bx0, by0, bx0 + 420, by0 + 130), radius=30, fill=(248, 244, 255))
+        _ct(d, bx0 + 210, by0 + 20, _clean(name), _fit(d, _clean(name), 380, 28), MUTED)
+        w = _short(who)
+        _ct(d, bx0 + 210, by0 + 62, w, _fit(d, w, 380, 44), INK)
+
+    _ct(d, cx, 1830, "재미로 보는 분석  ·  카톡 썸 분석기", _f(30), WHITE)
+    return _png(img)
